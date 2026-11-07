@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import Gdk from 'gi://Gdk?version=4.0';
+import GdkPixbuf from 'gi://GdkPixbuf';
 import GLib from 'gi://GLib';
 import GObject from 'gi://GObject';
 import Gtk from 'gi://Gtk?version=4.0';
@@ -180,6 +181,45 @@ function getDetailedTime(time) {
 }
 
 /**
+ * Whether an attachment can be opened with the default application. Only
+ * media is opened, so a crafted MMS can't make us launch e.g. a .desktop file.
+ *
+ * @param {string} contentType - A content type
+ * @returns {boolean} If the content type is image, video or audio
+ */
+function isMediaType(contentType) {
+    return ['image/', 'video/', 'audio/'].some(prefix => {
+        return `${contentType}`.startsWith(prefix);
+    });
+}
+
+
+/**
+ * Get a one-line description of a message's attachments.
+ *
+ * @param {object} message - A message object
+ * @returns {string} A description, or an empty string without attachments
+ */
+function getAttachmentsLabel(message) {
+    if (!Array.isArray(message?.attachments) || !message.attachments.length)
+        return '';
+
+    const type = `${message.attachments[0].mime_type}`;
+
+    if (type.startsWith('image/'))
+        return _('Picture');
+
+    if (type.startsWith('video/'))
+        return _('Video');
+
+    if (type.startsWith('audio/'))
+        return _('Audio');
+
+    return _('Attachment');
+}
+
+
+/**
  * A ListBoxRow for each message of a conversation
  */
 const ConversationMessage = GObject.registerClass({
@@ -187,8 +227,9 @@ const ConversationMessage = GObject.registerClass({
     Template: 'resource:///org/gnome/Shell/Extensions/GSConnect/ui/messaging-conversation-message.ui',
     Children: ['message-box', 'message-label', 'time-label'],
 }, class ConversationMessage extends Gtk.ListBoxRow {
-    _init(params) {
+    _init({plugin = null, ...params}) {
         super._init();
+        this._plugin = plugin;
         Object.assign(this, params);
     }
 
@@ -206,6 +247,134 @@ const ConversationMessage = GObject.registerClass({
         });
 
         return true;
+    }
+
+    _addAttachments(attachments) {
+        if (!Array.isArray(attachments) || !attachments.length)
+            return;
+
+        // Show the attachments above the text
+        let sibling = null;
+
+        for (const attachment of attachments) {
+            const widget = this._createAttachmentWidget(attachment);
+            widget.halign = this.message_label.halign;
+            this.message_box.insert_child_after(widget, sibling);
+            sibling = widget;
+        }
+
+        this.message_label.visible = Boolean(this.message.body);
+    }
+
+    _createAttachmentWidget(attachment) {
+        let image = null;
+
+        if (attachment.encoded_thumbnail) {
+            try {
+                const loader = new GdkPixbuf.PixbufLoader();
+                loader.write_bytes(new GLib.Bytes(
+                    GLib.base64_decode(attachment.encoded_thumbnail)));
+                loader.close();
+
+                // Honour the EXIF orientation of photos taken sideways
+                const pixbuf = loader.get_pixbuf().apply_embedded_orientation();
+                const texture = Gdk.Texture.new_for_pixbuf(pixbuf);
+                const scale = Math.min(1, 240 / Math.max(texture.width,
+                    texture.height));
+
+                image = new Gtk.Picture({
+                    paintable: texture,
+                    content_fit: Gtk.ContentFit.CONTAIN,
+                    width_request: Math.round(texture.width * scale),
+                    height_request: Math.round(texture.height * scale),
+                });
+            } catch (e) {
+                debug(e);
+            }
+        }
+
+        if (image === null) {
+            image = new Gtk.Image({
+                gicon: Gio.content_type_get_symbolic_icon(
+                    `${attachment.mime_type}`),
+                pixel_size: 48,
+            });
+        }
+
+        if (!isMediaType(attachment.mime_type) || this._plugin === null)
+            return image;
+
+        // Shown over the thumbnail while the attachment is downloaded
+        const progress = new Gtk.Box({
+            orientation: Gtk.Orientation.VERTICAL,
+            spacing: 6,
+            halign: Gtk.Align.CENTER,
+            valign: Gtk.Align.CENTER,
+            css_classes: ['osd'],
+            visible: false,
+        });
+        progress.spinner = new Gtk.Spinner({
+            width_request: 24,
+            height_request: 24,
+        });
+        progress.label = new Gtk.Label();
+        progress.append(progress.spinner);
+        progress.append(progress.label);
+
+        const overlay = new Gtk.Overlay({child: image});
+        overlay.add_overlay(progress);
+
+        const button = new Gtk.Button({
+            child: overlay,
+            has_frame: false,
+            tooltip_text: _('Open'),
+        });
+        button.connect('clicked', () => {
+            this._openAttachment(button, progress, attachment);
+        });
+
+        return button;
+    }
+
+    async _openAttachment(button, progress, attachment) {
+        button.sensitive = false;
+        progress.label.label = '';
+        progress.visible = true;
+        progress.spinner.spinning = true;
+
+        try {
+            const file = await this._plugin.requestAttachment(attachment,
+                fraction => {
+                    progress.label.label = `${Math.floor(fraction * 100)}%`;
+                });
+
+            // Don't trust the device-provided type alone. The files have no
+            // extension, so the type has to be sniffed from the contents.
+            const contentType = file.query_info('standard::content-type',
+                Gio.FileQueryInfoFlags.NONE, null).get_content_type();
+
+            if (!isMediaType(contentType))
+                throw new Error(`Refusing to open ${contentType} attachment`);
+
+            const launcher = new Gtk.FileLauncher({file: file});
+            await new Promise((resolve, reject) => {
+                launcher.launch(this.get_root(), null, (obj, res) => {
+                    try {
+                        resolve(launcher.launch_finish(res));
+                    } catch (e) {
+                        reject(e);
+                    }
+                });
+            });
+            button.tooltip_text = _('Open');
+        } catch (e) {
+            debug(e);
+            button.tooltip_text = _('Failed to download attachment');
+        } finally {
+            progress.spinner.spinning = false;
+            progress.visible = false;
+            button.sensitive = true;
+        }
     }
 
     get date() {
@@ -249,6 +418,8 @@ const ConversationMessage = GObject.registerClass({
             this.time_label.halign = Gtk.Align.END;
         }
         this.time_label.set_label(getShortTime(message.date));
+
+        this._addAttachments(message.attachments);
     }
 });
 
@@ -688,7 +859,11 @@ const MessagingConversation = GObject.registerClass({
             });
         }
 
-        return new ConversationMessage({contact: this.contacts[sender], message: message});
+        return new ConversationMessage({
+            contact: this.contacts[sender],
+            plugin: this.plugin,
+            message: message,
+        });
     }
 
     _populateMessages() {
@@ -936,7 +1111,10 @@ const ConversationSummary = GObject.registerClass({
             }
             this.time_label.set_visible(true);
         } else if (has_attachments) {
-            body_label = image_placeholder;
+            const label = getAttachmentsLabel(message);
+            body_label = label
+                ? `<i>${GLib.markup_escape_text(label, -1)}</i>`
+                : image_placeholder;
             this.time_label.set_visible(true);
         }
 
@@ -1288,8 +1466,8 @@ export const MessagingWindow = GObject.registerClass({
                     message.read === Sms.MessageStatus.UNREAD;
             }).length;
 
-            // Skip messages without a body (eg. MMS messages without text)
-            if (message?.body)
+            // Skip messages without a body or attachments
+            if (message?.body || getAttachmentsLabel(message))
                 messages[thread_id] = message;
         }
 
