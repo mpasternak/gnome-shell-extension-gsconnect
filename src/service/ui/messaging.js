@@ -288,10 +288,14 @@ const ConversationParticipants = GObject.registerClass({
                 title: contact.name,
                 subtitle: Contacts.getDisplayNumber(contact, item.address),
             });
-            row.add_prefix(new Adw.Avatar({
-                text: contact.name,
-                size: 40,
-            }));
+            const avatar = new Adw.Avatar({size: 40, show_initials: true});
+            Contacts.setAvatarContact(avatar, contact);
+            row.add_prefix(avatar);
+            row.add_suffix(new Gtk.Image({icon_name: 'go-next-symbolic'}));
+            row.activatable = true;
+            row.connect('activated', () => {
+                Contacts.showContact(this, this.device, contact, item.address);
+            });
             this.contacts_list.append(row);
         });
     }
@@ -366,6 +370,12 @@ const MessagingConversation = GObject.registerClass({
         const contact = this.device.contacts.query({number: address});
 
         this._participantsId = this.participants_button.connect('clicked', () => {
+            // A single contact: show it directly
+            if (this.addresses.length === 1) {
+                Contacts.showContact(this, this.device, contact, address);
+                return;
+            }
+
             if (this._participants_dialog === undefined) {
                 this._participants_dialog = new ConversationParticipants({
                     device: this.device,
@@ -378,7 +388,8 @@ const MessagingConversation = GObject.registerClass({
         if (this.addresses.length === 1) {
             this.content_title.set_title(contact.name);
             this.content_title.set_subtitle(Contacts.getDisplayNumber(contact, address));
-            this.avatar.set_text(contact.name);
+            Contacts.setAvatarContact(this.avatar, contact);
+            this.participants_button.tooltip_text = _('Show contact');
         } else {
             const otherLength = this.addresses.length - 1;
             this.content_title.set_title(contact.name);
@@ -889,14 +900,16 @@ const ConversationSummary = GObject.registerClass({
         if (addresses.length === 1) {
             const contact = this.contacts[this._sender];
             if (contact) {
-                this.avatar.set_text(contact.name);
+                Contacts.setAvatarContact(this.avatar, contact);
                 name_label = GLib.markup_escape_text(contact.name, -1);
             } else {
-                this.avatar.set_text(this._sender);
+                Contacts.setAvatarContact(this.avatar, null, this._sender);
                 name_label = GLib.markup_escape_text(this._sender, -1);
             }
         } else {
             name_label = _('Group Message');
+            this.avatar.custom_image = null;
+            this.avatar.text = '';
             this.avatar.icon_name = 'people-symbolic';
             const participants = [];
             addresses.forEach(address => {
