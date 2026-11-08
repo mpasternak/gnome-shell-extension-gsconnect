@@ -932,7 +932,8 @@ export const MessagingWindow = GObject.registerClass({
     },
     Template: 'resource:///org/gnome/Shell/Extensions/GSConnect/ui/messaging-window.ui',
     Children: [
-        'sidebar-title', 'split-view', 'button-search', 'search-entry',
+        'device-button', 'device-name', 'device-status', 'device-status-light',
+        'split-view', 'button-search', 'search-entry',
         'thread-list', 'toast-overlay', 'search-bar',
     ],
 }, class MessagingWindow extends Adw.ApplicationWindow {
@@ -940,10 +941,14 @@ export const MessagingWindow = GObject.registerClass({
     _init(params) {
         super._init(params);
         this.stack = new Map();
-        this.sidebar_title.set_subtitle(this.device.name);
         this.insert_action_group('device', this.device);
 
         // Device Status
+        this._deviceStatusIds = ['name', 'connected', 'paired'].map(name => {
+            return this.device.connect(`notify::${name}`,
+                this._updateDeviceStatus.bind(this));
+        });
+        this._updateDeviceStatus();
 
         this._deviceConnectedId = this.device.connect('notify::connected', (device) => {
             if (!device.connected) {
@@ -1018,6 +1023,7 @@ export const MessagingWindow = GObject.registerClass({
 
         GLib.Source.remove(this._timestampThreadsId);
         this.device.disconnect(this._deviceConnectedId);
+        this._deviceStatusIds.forEach(id => this.device.disconnect(id));
         this.search_entry.disconnect(this._searchEntryId);
         this.contact_chooser.disconnect(this._numberSelectedId);
         this.plugin.disconnect(this._threadsChangedId);
@@ -1093,6 +1099,36 @@ export const MessagingWindow = GObject.registerClass({
     _sync() {
         this.device.contacts.fetch();
         this.plugin.connected();
+    }
+
+    /*
+     * Show the name of the device and whether it is connected
+     */
+    _updateDeviceStatus() {
+        this.device_name.label = this.device.name;
+
+        let status, style;
+        if (!this.device.paired) {
+            status = _('Unpaired');
+            style = 'warning';
+        } else if (this.device.connected) {
+            status = _('Connected');
+            style = 'success';
+        } else {
+            status = _('Disconnected');
+            style = 'error';
+        }
+
+        this.device_status.label = status;
+        this.device_status_light.css_classes = ['caption', style];
+    }
+
+    /*
+     * Open the settings of the device in GSConnect Preferences
+     */
+    _onDeviceSettings() {
+        this.application.activate_action('device-preferences',
+            new GLib.Variant('s', this.device.id));
     }
 
     _onNewConversation() {
