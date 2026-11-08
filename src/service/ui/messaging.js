@@ -28,6 +28,21 @@ const TIME_SPAN_WEEK = 604800000;
 // How many cached messages to show at a time
 const MESSAGE_PAGE_SIZE = 15;
 
+/**
+ * Let the window be closed with Ctrl+W and Ctrl+Q, as in GNOME applications.
+ * The service keeps running; only the window is closed.
+ *
+ * @param {Gtk.Window} window - The window
+ */
+function addCloseShortcuts(window) {
+    const controller = new Gtk.ShortcutController();
+    controller.add_shortcut(new Gtk.Shortcut({
+        trigger: Gtk.ShortcutTrigger.parse_string('<Control>w|<Control>q'),
+        action: Gtk.NamedAction.new('window.close'),
+    }));
+    window.add_controller(controller);
+}
+
 
 // Less than a day ago (eg. 11:42 PM)
 const _ltdFormat = new Intl.DateTimeFormat('default', {
@@ -1516,6 +1531,7 @@ export const MessagingWindow = GObject.registerClass({
         this._sync();
         this._onThreadsChanged();
         this.restoreGeometry('messaging');
+        addCloseShortcuts(this);
     }
 
     /*
@@ -2013,6 +2029,7 @@ export const ConversationChooser = GObject.registerClass({
         this.message = params.message;
         delete params.message;
         super._init(params);
+        addCloseShortcuts(this);
 
         this.thread_list.set_sort_func(MessagingWindow.prototype._sortThreads);
         this._threadListId = this.thread_list.connect('row-activated', this._select.bind(this));
