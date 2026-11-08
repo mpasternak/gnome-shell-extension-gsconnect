@@ -176,7 +176,7 @@ const SMSPlugin = GObject.registerClass({
     _init(device) {
         super._init(device, 'sms');
 
-        this.cacheProperties(['_threads', '_synced']);
+        this.cacheProperties(['_threads', '_synced', '_complete']);
     }
 
     /**
@@ -191,6 +191,19 @@ const SMSPlugin = GObject.registerClass({
             this._synced = {};
 
         return this._synced;
+    }
+
+    /**
+     * The date of the first message of each thread, by thread ID, for the
+     * threads whose cached messages go back to their first message.
+     *
+     * @type {object}
+     */
+    get complete() {
+        if (this._complete === undefined)
+            this._complete = {};
+
+        return this._complete;
     }
 
     get threads() {
@@ -227,6 +240,7 @@ const SMSPlugin = GObject.registerClass({
     clearCache() {
         this._threads = {};
         this._synced = {};
+        this._complete = {};
         this.notify('threads');
         this.queueCacheWrite();
     }
@@ -286,9 +300,6 @@ const SMSPlugin = GObject.registerClass({
 
         // Threads whose newest page was fetched on this connection
         this._freshThreads = new Set();
-
-        // Threads known to be loaded back to their first message
-        this._completeThreads = new Set();
 
         for (const thread_id of pending)
             this.emit('thread-page-done', thread_id);
@@ -449,7 +460,8 @@ const SMSPlugin = GObject.registerClass({
         // reached the start of the thread
         if (messages.length < request.size ||
             (request.older && !added.some(m => m.date < request.start))) {
-            this._completeThreads.add(thread_id);
+            this.complete[thread_id] = this.threads[thread_id]?.[0]?.date ??
+                oldest;
 
             if (request.newer)
                 this.synced[thread_id] = syncTo;
@@ -511,6 +523,17 @@ const SMSPlugin = GObject.registerClass({
     }
 
     /**
+     * Whether the cached messages of a thread go back to its first message,
+     * so there are no older messages to request.
+     *
+     * @param {string} thread_id - The thread ID
+     * @returns {boolean} %true if the thread is fully cached
+     */
+    isThreadComplete(thread_id) {
+        return thread_id !== null && `${thread_id}` in this.complete;
+    }
+
+    /**
      * Whether messages newer than the cached ones of a thread are being
      * fetched: its newest page, or the messages between it and the cache.
      *
@@ -552,7 +575,7 @@ const SMSPlugin = GObject.registerClass({
 
         const cache = this.threads[thread_id];
 
-        if (this._completeThreads.has(thread_id) || !cache?.length)
+        if (this.isThreadComplete(thread_id) || !cache?.length)
             return false;
 
         this._sendThreadPageRequest(thread_id, cache[0].date);
