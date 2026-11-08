@@ -569,7 +569,9 @@ export const Window = GObject.registerClass({
             this._pendingDevice = id;
         } else {
             this._pendingDevice = undefined;
+            // Show the page even if the row is already selected
             this.device_list.select_row(row);
+            this._onDeviceSelected(this.device_list, row);
         }
     }
 

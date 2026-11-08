@@ -1767,8 +1767,18 @@ export const MessagingWindow = GObject.registerClass({
      * Open the settings of the device in GSConnect Preferences
      */
     _onDeviceSettings() {
+        // A token from this window lets an open preferences window raise
+        // itself; on Wayland it would stay in the background otherwise.
+        let token = '';
+        try {
+            const context = this.get_display().get_app_launch_context();
+            token = context.get_startup_notify_id(null, []) ?? '';
+        } catch (e) {
+            debug(e);
+        }
+
         this.application.activate_action('device-preferences',
-            new GLib.Variant('s', this.device.id));
+            new GLib.Variant('(ss)', [this.device.id, token]));
     }
 
     _onNewConversation() {
