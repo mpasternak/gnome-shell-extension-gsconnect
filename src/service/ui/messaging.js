@@ -685,7 +685,8 @@ const MessagingConversation = GObject.registerClass({
     /**
      * Show what is being fetched from the device: messages newer than the
      * cached ones below the conversation, older ones above it. Don't send
-     * messages until the conversation is up to date.
+     * messages until the conversation is up to date; while disconnected a
+     * message can still be written, but not sent.
      */
     _updateSpinner() {
         const pending = this.thread_id !== null &&
@@ -696,7 +697,7 @@ const MessagingConversation = GObject.registerClass({
         this.spinner.visible = pending && !syncing;
         this.spinner_anim.visible = pending && !syncing;
         this.sync_revealer.reveal_child = syncing;
-        this.message_bar.sensitive = this.device.connected && !syncing;
+        this.message_bar.sensitive = !syncing;
         this._tryFocusEntry();
     }
 
@@ -1094,6 +1095,15 @@ const MessagingConversation = GObject.registerClass({
         // Don't send empty texts
         if (!this.message_bar.text.trim())
             return;
+
+        // Keep the message in the entry, to send it once connected
+        if (!this.device.connected) {
+            this.get_root()?.toast_overlay?.add_toast(new Adw.Toast({
+                title: _('Device is disconnected, the message was not sent'),
+                timeout: 5,
+            }));
+            return;
+        }
 
         // Send the message
         this.plugin.sendMessage(this.addresses, this.message_bar.text);
