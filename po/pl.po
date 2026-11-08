@@ -1284,3 +1284,11 @@ msgstr "Otwórz w przeglądarce"
 #: data/ui/messaging-conversation.ui
 msgid "Downloading new messages…"
 msgstr "Pobieranie nowych wiadomości…"
+
+#: src/service/ui/messaging.js
+msgid "Today"
+msgstr "Dzisiaj"
+
+#: src/service/ui/messaging.js
+msgid "Yesterday"
+msgstr "Wczoraj"

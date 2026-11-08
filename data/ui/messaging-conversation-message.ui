@@ -10,50 +10,51 @@ SPDX-License-Identifier: GPL-2.0-or-later
   <requires lib="gtk" version="4.0"/>
   <requires lib="Adw" version="1.0"/>
 
-  <!-- TODO: Switch GtkGrid to GtkBox -->
   <template class="GSConnectMessagingConversationMessage" parent="GtkListBoxRow">
     <property name="visible">True</property>
     <property name="hexpand">True</property>
     <property name="activatable">False</property>
     <property name="selectable">False</property>
     <child>
-      <object class="GtkBox" id="message-box">
-        <property name="visible">True</property>
-        <property name="orientation">vertical</property>
+      <object class="GtkBox" id="bubble-box">
+        <property name="orientation">horizontal</property>
         <property name="halign">end</property>
         <property name="hexpand">True</property>
-        <property name="margin-top">6</property>
-        <property name="margin-bottom">6</property>
+        <property name="spacing">6</property>
+        <property name="margin-top">3</property>
+        <property name="margin-bottom">3</property>
         <property name="margin-start">6</property>
         <property name="margin-end">6</property>
-        <property name="spacing">6</property>
-        <style>
-          <class name="message-row"/>
-        </style>
         <child>
-          <object class="GtkLabel" id="message-label">
-            <property name="visible">True</property>
-            <property name="halign">end</property>
-            <property name="selectable">True</property>
-            <property name="use-markup">True</property>
-            <property name="wrap">True</property>
-            <property name="wrap-mode">word-char</property>
-            <property name="xalign">0</property>
-            <signal name="activate-link" handler="_onActivateLink" swapped="no"/>
+          <object class="GtkLabel" id="time-label">
+            <property name="valign">end</property>
+            <property name="margin-bottom">6</property>
+            <property name="opacity">0</property>
+            <style>
+              <class name="dim-label"/>
+              <class name="caption"/>
+              <class name="numeric"/>
+            </style>
           </object>
         </child>
         <child>
-          <object class="GtkLabel" id="time-label">
-            <property name="visible">True</property>
-            <property name="halign">start</property>
-            <property name="margin-top">6</property>
-            <property name="margin-bottom">6</property>
-            <property name="margin-start">6</property>
-            <property name="margin-end">6</property>
-            <attributes>
-              <attribute name="weight" value="bold"/>
-              <attribute name="scale" value="0.833333333"/>
-            </attributes>
+          <object class="GtkBox" id="message-box">
+            <property name="orientation">vertical</property>
+            <property name="spacing">6</property>
+            <style>
+              <class name="message-row"/>
+            </style>
+            <child>
+              <object class="GtkLabel" id="message-label">
+                <property name="halign">end</property>
+                <property name="selectable">True</property>
+                <property name="use-markup">True</property>
+                <property name="wrap">True</property>
+                <property name="wrap-mode">word-char</property>
+                <property name="xalign">0</property>
+                <signal name="activate-link" handler="_onActivateLink" swapped="no"/>
+              </object>
+            </child>
           </object>
         </child>
       </object>

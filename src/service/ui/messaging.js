@@ -29,12 +29,6 @@ const TIME_SPAN_WEEK = 604800000;
 const MESSAGE_PAGE_SIZE = 15;
 
 
-// Less than an hour (eg. 42 minutes ago)
-const _lthLong = new Intl.RelativeTimeFormat('default', {
-    numeric: 'auto',
-    style: 'long',
-});
-
 // Less than a day ago (eg. 11:42 PM)
 const _ltdFormat = new Intl.DateTimeFormat('default', {
     hour: 'numeric',
@@ -91,48 +85,6 @@ const _cFormat = new Intl.DateTimeFormat('default', {
 
 
 /**
- * Return a human-readable timestamp, formatted for longer contexts.
- *
- * @param {number} time - Milliseconds since the epoch (local time)
- * @returns {string} A localized timestamp similar to what Android Messages uses
- */
-function getTime(time) {
-    const date = new Date(time);
-    const now = new Date();
-    const diff = now - time;
-
-    // Super recent
-    if (diff < TIME_SPAN_MINUTE)
-        // TRANSLATORS: Less than a minute ago
-        return _('Just now');
-
-    // Under an hour (TODO: these labels aren't updated)
-    if (diff < TIME_SPAN_HOUR)
-        return _lthLong.format(-Math.floor(diff / TIME_SPAN_MINUTE), 'minute');
-
-    // Yesterday, but less than 24 hours ago
-    if (diff < TIME_SPAN_DAY && now.getDay() !== date.getDay())
-        // TRANSLATORS: Yesterday, but less than 24 hours (eg. Yesterday · 11:29 PM)
-        return _('Yesterday・%s').format(_ltdFormat.format(time));
-
-    // Less than a day ago
-    if (diff < TIME_SPAN_DAY)
-        return _ltdFormat.format(time);
-
-    // Less than a week ago
-    if (diff < TIME_SPAN_WEEK)
-        return _ltwLong.format(time);
-
-    // Sometime this year
-    if (date.getFullYear() === now.getFullYear())
-        return _ltyLong.format(time);
-
-    // Earlier than that
-    return _gtyLong.format(time);
-}
-
-
-/**
  * Return a human-readable timestamp, formatted for shorter contexts.
  *
  * @param {number} time - Milliseconds since the epoch (local time)
@@ -174,9 +126,37 @@ function getShortTime(time) {
 
 
 /**
- * Return a human-readable timestamp, similar to `strftime()` with `%c`.
+ * Return the day of a message, for the separator above the messages of each
+ * day (eg. Today, Yesterday, Saturday, 2 November).
  *
- * @param {number} time - Milliseconds since the epoch (local time)
+ * @param {number} time - Milliseconds since the epoch (UTC)
+ * @returns {string} A localized day
+ */
+function getDayLabel(time) {
+    const date = new Date(time);
+    const day = new Date(time).setHours(0, 0, 0, 0);
+    const today = new Date().setHours(0, 0, 0, 0);
+    const days = Math.round((today - day) / TIME_SPAN_DAY);
+
+    if (days === 0)
+        return _('Today');
+
+    if (days === 1)
+        return _('Yesterday');
+
+    if (days > 1 && days < 7)
+        return _ltwLong.format(time);
+
+    if (date.getFullYear() === new Date().getFullYear())
+        return _ltyLong.format(time);
+
+    return _gtyLong.format(time);
+}
+
+/**
+ * Return a string with the date and time of a message, for its tooltip.
+ *
+ * @param {number} time - Milliseconds since the epoch (UTC)
  * @returns {string} A localized timestamp
  */
 function getDetailedTime(time) {
@@ -239,12 +219,23 @@ function isSupportedMessage(message) {
 const ConversationMessage = GObject.registerClass({
     GTypeName: 'GSConnectMessagingConversationMessage',
     Template: 'resource:///org/gnome/Shell/Extensions/GSConnect/ui/messaging-conversation-message.ui',
-    Children: ['message-box', 'message-label', 'time-label'],
+    Children: ['bubble-box', 'message-box', 'message-label', 'time-label'],
 }, class ConversationMessage extends Gtk.ListBoxRow {
     _init({plugin = null, ...params}) {
         super._init();
         this._plugin = plugin;
         Object.assign(this, params);
+
+        // Show the time beside the message while it's hovered; it takes its
+        // space all the time, so the messages don't move
+        const motion = new Gtk.EventControllerMotion();
+        motion.connect('enter', () => {
+            this.time_label.opacity = 1;
+        });
+        motion.connect('leave', () => {
+            this.time_label.opacity = 0;
+        });
+        this.add_controller(motion);
     }
 
     _onActivateLink(label, uri) {
@@ -439,18 +430,19 @@ const ConversationMessage = GObject.registerClass({
 
         this.message_label.tooltip_text = getDetailedTime(message.date);
 
-        // Add avatar for incoming messages
+        // Incoming messages are on the left, with the time on their right
         if (message.type === Sms.MessageBox.INBOX) {
-            this.message_box.margin_end = 18;
-            this.message_box.halign = Gtk.Align.START;
+            this.bubble_box.margin_end = 18;
+            this.bubble_box.halign = Gtk.Align.START;
+            this.bubble_box.reorder_child_after(this.time_label,
+                this.message_box);
 
             this.message_label.get_style_context().add_class('message-in');
             this.message_label.halign = Gtk.Align.START;
         } else {
             this.message_label.get_style_context().add_class('message-out');
-            this.time_label.halign = Gtk.Align.END;
         }
-        this.time_label.set_label(getShortTime(message.date));
+        this.time_label.set_label(_ltdFormat.format(message.date));
 
         this._addAttachments(message.attachments);
     }
@@ -1146,25 +1138,35 @@ const MessagingConversation = GObject.registerClass({
     }
 
     _headerMessages(row, before) {
-        // Skip pending
-        if (row.get_name() === 'pending')
+        // Only messages have a date; skip the indicator and pending messages
+        if (!(row instanceof ConversationMessage))
             return;
 
-        // Add date header if the last message was more than an hour ago
+        // Show the day above its first message
+        const previous = before instanceof ConversationMessage ? before : null;
+        const newDay = previous === null ||
+            new Date(previous.message.date).toDateString() !==
+            new Date(row.message.date).toDateString();
+
+        if (!newDay) {
+            row.set_header(null);
+            return;
+        }
+
         let header = row.get_header();
 
-        if (before !== null &&
-            before.message !== undefined &&
-            (row.message.date - before.message.date) > TIME_SPAN_HOUR) {
-            if (!header) {
-                header = new Gtk.Label({visible: true, selectable: true});
-                header.get_style_context().add_class('dim-label');
-                row.set_header(header);
-            }
-
-            header.label = getTime(row.message.date);
-
+        if (!header) {
+            header = new Gtk.Label({
+                halign: Gtk.Align.CENTER,
+                margin_top: 12,
+                margin_bottom: 6,
+            });
+            header.add_css_class('dim-label');
+            header.add_css_class('caption-heading');
+            row.set_header(header);
         }
+
+        header.label = getDayLabel(row.message.date);
     }
 
     _holdPosition() {
