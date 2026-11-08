@@ -557,6 +557,22 @@ export const Window = GObject.registerClass({
         this.device_menu.set_menu_model(panel.menu);
     }
 
+    /**
+     * Show the settings of a device, once the service reports it.
+     *
+     * @param {string} id - The id of the device
+     */
+    showDevice(id) {
+        const row = this.rows[id];
+
+        if (row === undefined) {
+            this._pendingDevice = id;
+        } else {
+            this._pendingDevice = undefined;
+            this.device_list.select_row(row);
+        }
+    }
+
     _onDeviceChanged(device, paramspec) {
         const row = this.rows[device.id];
         switch (false) {
@@ -599,6 +615,9 @@ export const Window = GObject.registerClass({
             this.rows[device.id] = row;
             this.device_list.append(row);
             this._onDeviceChanged(device, null);
+
+            if (this._pendingDevice === device.id)
+                this.showDevice(device.id);
         } catch (e) {
             logError(e);
         }
