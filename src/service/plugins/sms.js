@@ -228,6 +228,7 @@ const SMSPlugin = GObject.registerClass({
         this._threads = {};
         this._synced = {};
         this.notify('threads');
+        this.queueCacheWrite();
     }
 
     cacheLoaded() {
@@ -359,6 +360,9 @@ const SMSPlugin = GObject.registerClass({
         // Sort the thread by ascending date and notify
         this.threads[thread_id] = cache.sort((a, b) => a.date - b.date);
         this.notify('threads');
+
+        // Keep each fetched page if the service stops unexpectedly
+        this.queueCacheWrite();
     }
 
     /**
