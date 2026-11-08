@@ -661,6 +661,7 @@ const MessagingConversation = GObject.registerClass({
             this._onEdgeReached.bind(this));
         this._upperId = this._vadj.connect('notify::upper',
             this._onUpperChanged.bind(this));
+        this._mapId = this.connect('map', this._tryFocusEntry.bind(this));
         this.showLatest();
     }
 
@@ -696,6 +697,32 @@ const MessagingConversation = GObject.registerClass({
         this.spinner_anim.visible = pending && !syncing;
         this.sync_revealer.reveal_child = syncing;
         this.message_bar.sensitive = this.device.connected && !syncing;
+        this._tryFocusEntry();
+    }
+
+    /**
+     * Focus the message entry once the conversation can be replied to, so
+     * the user can start typing right after opening it.
+     */
+    focusEntry() {
+        this._wantFocus = true;
+
+        if (this._focusId === undefined) {
+            this._focusId = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+                this._focusId = undefined;
+                this._tryFocusEntry();
+                return GLib.SOURCE_REMOVE;
+            });
+        }
+    }
+
+    _tryFocusEntry() {
+        if (!this._wantFocus || !this.get_mapped() ||
+            !this.message_bar.message_entry.sensitive)
+            return;
+
+        if (this.message_bar.focusEntry())
+            this._wantFocus = false;
     }
 
     _onPageDone(plugin, thread_id) {
@@ -1298,6 +1325,10 @@ const MessagingConversation = GObject.registerClass({
 
         if (this._fillId !== undefined)
             GLib.source_remove(this._fillId);
+
+        if (this._focusId !== undefined)
+            GLib.source_remove(this._focusId);
+        this.disconnect(this._mapId);
         this.scrolled.disconnect(this._edgeReachedId);
         this.plugin.disconnect(this._threadsChangedId);
         this.plugin.disconnect(this._pageDoneId);
@@ -1725,6 +1756,7 @@ export const MessagingWindow = GObject.registerClass({
         // Select the conversation and entry active
         this.split_view.set_content(conversation);
         this.split_view.set_show_content(true);
+        conversation.focusEntry();
 
         // There was a pending message waiting for a conversation to be chosen
         if (this._pendingShare) {
@@ -1971,6 +2003,7 @@ export const MessagingWindow = GObject.registerClass({
 
         this.split_view.set_content(conversation);
         this.split_view.set_show_content(true);
+        conversation.focusEntry();
 
         // There was a pending message waiting for a conversation to be chosen
         if (this._pendingShare) {

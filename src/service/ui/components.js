@@ -64,6 +64,15 @@ export const MessagingInputText = GObject.registerClass({
         this.message_entry.buffer.text = text;
     }
 
+    /**
+     * Move the keyboard focus to the message entry.
+     *
+     * @returns {boolean} Whether the entry took the focus
+     */
+    focusEntry() {
+        return this.message_entry.grab_focus();
+    }
+
     get sensitive() {
         return this.message_entry.sensitive ||
             this.send_text.sensitive ||
