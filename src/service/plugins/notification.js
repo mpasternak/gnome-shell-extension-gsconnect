@@ -592,7 +592,10 @@ const NotificationPlugin = GObject.registerClass({
                 body = packet.body.text;
                 action = {
                     name: 'replySms',
-                    parameter: new GLib.Variant('s', packet.body.title),
+                    parameter: new GLib.Variant('(ss)', [
+                        packet.body.title ?? '',
+                        packet.body.text ?? '',
+                    ]),
                 };
 
                 if (icon === null)

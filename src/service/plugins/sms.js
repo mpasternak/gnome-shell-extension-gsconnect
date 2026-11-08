@@ -69,7 +69,7 @@ export const Metadata = {
             label: _('Reply SMS'),
             icon_name: 'chat-bubbles-text-symbolic',
 
-            parameter_type: new GLib.VariantType('s'),
+            parameter_type: new GLib.VariantType('(ss)'),
             incoming: [],
             outgoing: ['kdeconnect.sms.request'],
         },
@@ -846,14 +846,84 @@ const SMSPlugin = GObject.registerClass({
     }
 
     /**
-     * A notification action for replying to SMS messages (or missed calls).
+     * Find the thread a message notification is most likely about.
      *
-     * @param {string} hint - Could be either a contact name or phone number
+     * The notification carries no thread ID, only its title (a contact name
+     * or an address) and text (the message body, possibly shortened). Each
+     * thread is scored by whether its latest message has that text and
+     * whether it is a one-to-one thread with that address or contact name;
+     * the text counts for more, and ties go to the most recent thread.
+     *
+     * @param {string} title - The notification title
+     * @param {string} text - The notification text
+     * @returns {string|null} A thread ID, or %null if none matches
      */
-    replySms(hint) {
-        this.window.present();
-        // FIXME: causes problems now that non-numeric addresses are allowed
-        // this.window.address = hint.toPhoneNumber();
+    _findNotificationThread(title, text) {
+        title = title?.trim() ?? '';
+        text = text?.trim().replace(/(?:…|\.\.\.)$/, '') ?? '';
+
+        let best = null;
+
+        for (const thread_id of Object.keys(this.threads)) {
+            const latest = this._getThreadCache(thread_id).at(-1);
+
+            if (!latest?.addresses?.length)
+                continue;
+
+            let score = 0;
+
+            if (text && latest.body?.trim().startsWith(text))
+                score += 2;
+
+            if (title && latest.addresses.length === 1) {
+                const address = latest.addresses[0].address ?? '';
+                let matches = address === title;
+
+                if (!matches && /\d/.test(title))
+                    matches = address.equalsPhoneNumber(title);
+
+                if (!matches) {
+                    const contact = this.device.contacts.query({
+                        number: address,
+                    });
+                    matches = contact.name === title;
+                }
+
+                if (matches)
+                    score += 1;
+            }
+
+            if (score === 0)
+                continue;
+
+            if (best === null || score > best.score ||
+                (score === best.score && latest.date > best.date))
+                best = {thread_id, score, date: latest.date};
+        }
+
+        return best?.thread_id ?? null;
+    }
+
+    /**
+     * A notification action for replying to SMS messages (or missed calls).
+     * Opens the messaging window on the conversation the notification is
+     * about, if it can be found.
+     *
+     * @param {string} title - The notification title (a contact name or
+     *   phone number)
+     * @param {string} text - The notification text
+     */
+    replySms(title, text = '') {
+        const window = this.window;
+        window.present();
+
+        if (!(window instanceof MessagingWindow))
+            return;
+
+        const thread_id = this._findNotificationThread(title, text);
+
+        if (thread_id !== null)
+            window.thread_id = thread_id;
     }
 
     /**
