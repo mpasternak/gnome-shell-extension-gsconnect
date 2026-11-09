@@ -32,6 +32,9 @@ const MESSAGE_PAGE_SIZE = 15;
 // many cached messages are left to show, as in KDE Connect's SMS app
 const MESSAGE_LOW_WATER_MARK = 25;
 
+// How much earlier than when it was sent a message may be dated by the device
+const PENDING_CLOCK_SKEW = 2 * TIME_SPAN_MINUTE;
+
 /**
  * Let the window be closed with Ctrl+W and Ctrl+Q, as in GNOME applications.
  * The service keeps running; only the window is closed.
@@ -684,10 +687,10 @@ const MessagingConversation = GObject.registerClass({
 
     /**
      * Show what is being fetched from the device: messages newer than the
-     * cached ones below the conversation, older ones above it. Don't send
-     * messages until the conversation is up to date; while disconnected a
-     * message can still be written, but not sent. Once every message is
-     * shown, mark the beginning of the conversation.
+     * cached ones below the conversation, older ones above it. Messages can
+     * be sent meanwhile; the device sends them on its own, and while
+     * disconnected a message can still be written, but not sent. Once every
+     * message is shown, mark the beginning of the conversation.
      */
     _updateSpinner() {
         const pending = this.thread_id !== null &&
@@ -703,7 +706,6 @@ const MessagingConversation = GObject.registerClass({
         this.spinner_anim.visible = loading;
         this.thread_start.visible = start;
         this.sync_revealer.reveal_child = syncing;
-        this.message_bar.sensitive = !syncing;
         this._tryFocusEntry();
     }
 
@@ -1079,6 +1081,8 @@ const MessagingConversation = GObject.registerClass({
             this.pending_messages.forEach(row =>  {
                 this.pending_box.remove(row);
             });
+            this.pending_messages = [];
+            this.notify('has-pending');
         }
     }
 
@@ -1114,7 +1118,8 @@ const MessagingConversation = GObject.registerClass({
         }
 
         // Send the message
-        this.plugin.sendMessage(this.addresses, this.message_bar.text);
+        const text = this.message_bar.text;
+        this.plugin.sendMessage(this.addresses, text);
 
         // Add a phony message in the pending box
         const message = new Gtk.Label({
@@ -1130,6 +1135,7 @@ const MessagingConversation = GObject.registerClass({
         message.get_style_context().add_class('message-out');
         message.date = Date.now();
         message.type = Sms.MessageBox.SENT;
+        message.body = text.trim();
 
         // Notify to reveal the pending box
         this.pending_messages.push(message);
@@ -1273,6 +1279,29 @@ const MessagingConversation = GObject.registerClass({
     }
 
     /**
+     * Remove the pending message a sent message confirms: the oldest one
+     * with the same text, sent no later than it, allowing for the clocks of
+     * the device and the computer to differ. Older sent messages arriving
+     * while the conversation is fetched don't remove newer pending ones.
+     *
+     * @param {object} message - A sent message object
+     */
+    _confirmPending(message) {
+        const body = (message.body || '').trim();
+        const index = this.pending_messages.findIndex(row => {
+            return row.body === body &&
+                message.date >= row.date - PENDING_CLOCK_SKEW;
+        });
+
+        if (index < 0)
+            return;
+
+        const [row] = this.pending_messages.splice(index, 1);
+        this.pending_box.remove(row);
+        this.notify('has-pending');
+    }
+
+    /**
      * Add a message to the conversation.
      *
      * @param {object} message - A message object
@@ -1300,18 +1329,11 @@ const MessagingConversation = GObject.registerClass({
                 this.inbox_counter += 1;
 
 
-            if (message.date > this.latest) {
+            if (message.date > this.latest)
                 this.latest = message.date;
-                // Remove the first pending message
-                if (this.has_pending && message.type === Sms.MessageBox.SENT) {
-                    this.pending_messages.forEach(pending_row => {
-                        this.pending_box.remove(pending_row);
-                    });
-                    this.pending_messages = [];
-                    this.notify('has-pending');
-                }
 
-            }
+            if (message.type === Sms.MessageBox.SENT)
+                this._confirmPending(message);
 
             if (message.date < this.earliest || this.earliest < 0)
                 this.earliest = message.date;
